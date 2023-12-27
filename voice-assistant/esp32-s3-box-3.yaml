@@ -21,7 +21,7 @@ substitutions:
   voice_assist_thinking_phase_id: '3'
   voice_assist_replying_phase_id: '4'
   voice_assist_not_ready_phase_id: '10'
-  voice_assist_error_phase_id: '11'  
+  voice_assist_error_phase_id: '11'
   voice_assist_muted_phase_id: '12'
 
 esphome:
@@ -36,7 +36,7 @@ esphome:
   min_version: 2023.11.5
   on_boot:
       priority: 600
-      then: 
+      then:
         - script.execute: draw_display
         - delay: 30s
         - if:
@@ -88,8 +88,8 @@ wifi:
   ap:
   on_connect:
     - script.execute: draw_display
-    - delay: 5s # Gives time for improv results to be transmitted 
-    - ble.disable:  
+    - delay: 5s # Gives time for improv results to be transmitted
+    - ble.disable:
   on_disconnect:
     - script.execute: draw_display
     - ble.enable:
@@ -140,6 +140,13 @@ light:
     output: backlight_output
     restore_mode: RESTORE_DEFAULT_ON
     default_transition_length: 250ms
+    # Leave display off when idle display is off
+    on_turn_on:
+      - if:
+          condition:
+            lambda: return id(idle_display_mode);
+          then:
+            - script.execute: draw_display
 
 esp_adf:
   board: esp32s3box3
@@ -178,7 +185,7 @@ voice_assistant:
         condition:
           lambda: return !id(init_in_progress);
         then:
-          - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};  
+          - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
           - script.execute: draw_display
           - delay: 1s
           - if:
@@ -189,7 +196,7 @@ voice_assistant:
               else:
                 - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
           - script.execute: draw_display
-  on_client_connected: 
+  on_client_connected:
     - if:
         condition:
           switch.is_off: mute
@@ -200,10 +207,10 @@ voice_assistant:
           - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
         else:
           - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
-    - lambda: id(init_in_progress) = false; 
+    - lambda: id(init_in_progress) = false;
     - script.execute: draw_display
   on_client_disconnected:
-    - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};  
+    - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
     - script.execute: draw_display
 
 script:
@@ -221,6 +228,15 @@ script:
                       condition:
                         api.connected:
                       then:
+                        # Ensure screen is displayed for most pages when idle display is off
+                        - if:
+                            condition:
+                              light.is_on: led
+                            then:
+                              - lambda: |
+                                  if (id(idle_display_mode) == false) {
+                                    id(backlight_output).turn_on();
+                                  }
                         - lambda: |
                             switch(id(voice_assistant_phase)) {
                               case ${voice_assist_listening_phase_id}:
@@ -272,7 +288,7 @@ switch:
       - if:
           condition:
             lambda: return !id(init_in_progress);
-          then:      
+          then:
             - lambda: id(va).set_use_wake_word(true);
             - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
             - if:
@@ -286,11 +302,30 @@ switch:
       - if:
           condition:
             lambda: return !id(init_in_progress);
-          then:      
+          then:
             - voice_assistant.stop
             - lambda: id(va).set_use_wake_word(false);
             - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
             - script.execute: draw_display
+  - platform: template
+    name: Idle display
+    id: idle_display
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    # Immediately turn off display when idle display is turned off
+    on_turn_off:
+      - lambda: id(idle_display_mode) = false;
+      - script.execute: draw_display
+    # Only when LCD Backlight is on, immediately turn on display when idle display is turned on
+    on_turn_on:
+      - if:
+          condition:
+            light.is_on: led
+          then:
+            - lambda: id(backlight_output).turn_on();
+      - lambda: id(idle_display_mode) = true;
+      - script.execute: draw_display
 
 globals:
   - id: init_in_progress
@@ -301,6 +336,11 @@ globals:
     type: int
     restore_value: no
     initial_value: ${voice_assist_not_ready_phase_id}
+  # Retain state of idle display across reboots
+  - id: idle_display_mode
+    type: bool
+    restore_value: yes
+    initial_value: 'true'
 
 image:
   - file: ${error_illustration_file}
@@ -375,7 +415,11 @@ display:
     update_interval: never
     pages:
       - id: idle_page
+        # Turn off display with idle display is off
         lambda: |-
+          if (id(idle_display_mode) == false) {
+            id(backlight_output).turn_off();
+          }
           it.fill(id(idle_color));
           it.image((it.get_width() / 2), (it.get_height() / 2), id(casita_idle), ImageAlign::CENTER);
       - id: listening_page
